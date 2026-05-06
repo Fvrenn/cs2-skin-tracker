@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker exec cb5eafdf4f13 *)",
+      "Bash(del *)"
+    ]
+  }
+}
