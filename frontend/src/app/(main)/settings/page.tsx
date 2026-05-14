@@ -115,7 +115,7 @@ export default function SettingsPage() {
               onClick={() => syncMutation.mutate()}
               loading={syncMutation.isPending}
               disabled={!steamId}
-              title={!steamId ? 'Enregistre d'abord ton Steam ID' : undefined}
+              title={!steamId ? "Enregistre d'abord ton Steam ID" : undefined}
             >
               <RefreshCw className="w-3.5 h-3.5" />
               Sync inventaire Steam

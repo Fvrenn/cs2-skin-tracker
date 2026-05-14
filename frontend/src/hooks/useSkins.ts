@@ -8,11 +8,12 @@ export function useSkins() {
   });
 }
 
-export function useSkin(id: string) {
+export function useSkin(id: string, days = 30) {
   return useQuery({
-    queryKey: ['skins', id],
-    queryFn: () => api.skins.get(id),
+    queryKey: ['skins', id, days],
+    queryFn: () => api.skins.get(id, days),
     enabled: !!id,
+    placeholderData: (prev) => prev,
   });
 }
 

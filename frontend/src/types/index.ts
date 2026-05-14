@@ -11,6 +11,9 @@ export interface SkinSummary {
   id: string;
   market_hash_name: string;
   asset_id: string | null;
+  icon_url: string | null;
+  float_value: number | null;
+  rarity: string | null;
   status: SkinStatus;
   purchase_price_cents: number | null;
   purchase_price_eur: number | null;
@@ -18,6 +21,7 @@ export interface SkinSummary {
   last_price_eur: number | null;
   peak_price_cents: number | null;
   peak_price_eur: number | null;
+  peak_price_at: string | null;
   created_at: string;
 }
 

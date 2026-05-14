@@ -16,6 +16,9 @@ class SkinSummary(BaseModel):
     id: UUID
     market_hash_name: str
     asset_id: str | None
+    icon_url: str | None
+    float_value: float | None
+    rarity: str | None
     status: SkinStatus
     purchase_price_cents: int | None
     purchase_price_eur: float | None
@@ -23,6 +26,7 @@ class SkinSummary(BaseModel):
     last_price_eur: float | None
     peak_price_cents: int | None
     peak_price_eur: float | None
+    peak_price_at: datetime | None
     created_at: datetime
 
 

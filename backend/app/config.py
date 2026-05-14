@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     DEBUG: bool = False
 
     CSFLOAT_API_KEY: str = ""
+    CSFLOAT_USD_TO_EUR: float = 0.92
     SKINPORT_CLIENT_ID: str = ""
     SKINPORT_CLIENT_SECRET: str = ""
     STEAM_API_KEY: str = ""
@@ -21,7 +22,7 @@ class Settings(BaseSettings):
 
     DISCORD_BOT_TOKEN: str = ""
 
-    ALLOWED_ORIGINS: list[str] = ["http://localhost:3001"]
+    ALLOWED_ORIGINS: list[str] = ["http://localhost:3000"]
 
 
 settings = Settings()

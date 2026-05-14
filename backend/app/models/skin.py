@@ -1,8 +1,9 @@
 import enum
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
-from sqlalchemy import DateTime, Enum as SAEnum, ForeignKey, Index, Integer, String, UniqueConstraint, func
+from sqlalchemy import DateTime, Enum as SAEnum, ForeignKey, Index, Integer, Numeric, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -34,6 +35,9 @@ class Skin(Base):
     )
     market_hash_name: Mapped[str] = mapped_column(String(255), nullable=False)
     asset_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    icon_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    float_value: Mapped[Decimal | None] = mapped_column(Numeric(10, 9), nullable=True)
+    rarity: Mapped[str | None] = mapped_column(String(50), nullable=True)
     purchase_price: Mapped[int | None] = mapped_column(Integer, nullable=True)
     peak_price: Mapped[int | None] = mapped_column(Integer, nullable=True)
     peak_price_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

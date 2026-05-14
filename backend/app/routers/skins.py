@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -22,6 +22,18 @@ from app.services.steam import SteamError, SteamPrivateInventoryError, steam_cli
 
 router = APIRouter(prefix="/skins", tags=["skins"])
 
+# Items filtrés par défaut : cosmétiques sans valeur de revente significative
+_LOW_VALUE_KEYWORDS: list[str] = [
+    "Graffiti",
+    "Sealed Graffiti",
+    "Medal",
+    "Coin",
+    "Badge",
+    "Pin",
+    "Trophy",
+    "Music Kit",
+]
+
 
 def _to_eur(cents: int | None) -> float | None:
     return round(cents / 100, 2) if cents is not None else None
@@ -32,6 +44,9 @@ def _skin_to_summary(skin: Skin, last_price: int | None) -> SkinSummary:
         id=skin.id,
         market_hash_name=skin.market_hash_name,
         asset_id=skin.asset_id,
+        icon_url=skin.icon_url,
+        float_value=float(skin.float_value) if skin.float_value is not None else None,
+        rarity=skin.rarity,
         status=skin.status,
         purchase_price_cents=skin.purchase_price,
         purchase_price_eur=_to_eur(skin.purchase_price),
@@ -39,19 +54,26 @@ def _skin_to_summary(skin: Skin, last_price: int | None) -> SkinSummary:
         last_price_eur=_to_eur(last_price),
         peak_price_cents=skin.peak_price,
         peak_price_eur=_to_eur(skin.peak_price),
+        peak_price_at=skin.peak_price_at,
         created_at=skin.created_at,
     )
 
 
 @router.get("", response_model=list[SkinSummary])
 async def list_skins(
+    filter_low_value: bool = True,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[SkinSummary]:
+    where_clauses = [Skin.user_id == user.id, Skin.status != SkinStatus.SOLD]
+
+    if filter_low_value:
+        where_clauses.append(
+            ~or_(*(Skin.market_hash_name.ilike(f"%{kw}%") for kw in _LOW_VALUE_KEYWORDS))
+        )
+
     result = await db.execute(
-        select(Skin)
-        .where(Skin.user_id == user.id, Skin.status != SkinStatus.SOLD)
-        .order_by(Skin.created_at.desc())
+        select(Skin).where(*where_clauses).order_by(Skin.created_at.desc())
     )
     skins = list(result.scalars().all())
     if not skins:
@@ -77,18 +99,50 @@ async def get_skin(
     last_prices = await get_last_prices(db, [skin.market_hash_name])
     last_price = last_prices.get(skin.market_hash_name)
 
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-    hour_col = func.date_trunc("hour", PriceHistory.recorded_at).label("hour")
+    bucket_expr = func.date_trunc("hour", PriceHistory.recorded_at)
 
-    history_result = await db.execute(
-        select(hour_col, func.avg(PriceHistory.price_median).label("avg_price"))
-        .where(
-            PriceHistory.market_hash_name == skin.market_hash_name,
-            PriceHistory.source == PriceSource.CSFLOAT,
-            PriceHistory.recorded_at > cutoff,
+    where_clauses = [PriceHistory.market_hash_name == skin.market_hash_name]
+    if days > 0:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        where_clauses.append(PriceHistory.recorded_at > cutoff)
+
+    # Step 1 — avg per (hour-bucket, source)
+    per_source_subq = (
+        select(
+            bucket_expr.label("bucket"),
+            PriceHistory.source,
+            func.avg(PriceHistory.price_median).label("avg_price"),
         )
-        .group_by(hour_col)
-        .order_by(hour_col)
+        .where(*where_clauses)
+        .group_by(bucket_expr, PriceHistory.source)
+        .subquery()
+    )
+
+    # Step 2 — rank sources within each bucket: csfloat=1 > skinport=2 > steam=3
+    source_rank = case(
+        (per_source_subq.c.source == PriceSource.CSFLOAT, 1),
+        (per_source_subq.c.source == PriceSource.SKINPORT, 2),
+        else_=3,
+    )
+    ranked_subq = (
+        select(
+            per_source_subq.c.bucket.label("hour"),
+            per_source_subq.c.avg_price,
+            func.row_number()
+            .over(
+                partition_by=per_source_subq.c.bucket,
+                order_by=source_rank,
+            )
+            .label("rn"),
+        )
+        .subquery()
+    )
+
+    # Step 3 — keep best source per bucket
+    history_result = await db.execute(
+        select(ranked_subq.c.hour, ranked_subq.c.avg_price)
+        .where(ranked_subq.c.rn == 1)
+        .order_by(ranked_subq.c.hour)
     )
 
     history = [
@@ -145,26 +199,36 @@ async def sync_inventory(
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
 
     asset_ids = [item.asset_id for item in items if item.asset_id]
-    existing_ids: set[str] = set()
+    existing_by_asset: dict[str, Skin] = {}
     if asset_ids:
         existing_result = await db.execute(
-            select(Skin.asset_id).where(
+            select(Skin).where(
                 Skin.user_id == user.id,
                 Skin.asset_id.in_(asset_ids),
             )
         )
-        existing_ids = set(existing_result.scalars().all())
+        existing_by_asset = {
+            s.asset_id: s for s in existing_result.scalars().all() if s.asset_id
+        }
 
     imported = 0
     for item in items:
-        if item.asset_id in existing_ids:
-            continue
-        db.add(Skin(
-            user_id=user.id,
-            market_hash_name=item.market_hash_name,
-            asset_id=item.asset_id,
-        ))
-        imported += 1
+        icon = item.icon_url or None
+        if item.asset_id in existing_by_asset:
+            skin = existing_by_asset[item.asset_id]
+            skin.icon_url = icon
+            skin.float_value = item.float_value
+            skin.rarity = item.rarity
+        else:
+            db.add(Skin(
+                user_id=user.id,
+                market_hash_name=item.market_hash_name,
+                asset_id=item.asset_id,
+                icon_url=icon,
+                float_value=item.float_value,
+                rarity=item.rarity,
+            ))
+            imported += 1
 
     await db.commit()
     return SyncResult(imported=imported, message=f"{imported} skin(s) importé(s) depuis Steam")

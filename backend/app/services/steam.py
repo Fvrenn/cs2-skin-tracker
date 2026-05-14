@@ -32,11 +32,19 @@ class _SteamAsset(BaseModel):
     classid: str
 
 
+class _SteamTag(BaseModel):
+    category: str = ""
+    internal_name: str = ""
+    localized_category_name: str = ""
+    localized_tag_name: str = ""
+
+
 class _SteamDescription(BaseModel):
     classid: str
     market_hash_name: str = ""
     icon_url: str = ""
     marketable: int = 0
+    tags: list[_SteamTag] = []
 
 
 class _SteamInventoryResponse(BaseModel):
@@ -53,6 +61,8 @@ class InventoryItem(BaseModel):
     asset_id: str
     market_hash_name: str
     icon_url: str
+    float_value: float | None = None
+    rarity: str | None = None
 
 
 class SteamPricePoint(BaseModel):
@@ -148,11 +158,13 @@ class SteamClient:
             desc = desc_by_classid.get(asset.classid)
             if desc is None or not desc.market_hash_name:
                 continue
+            rarity_tag = next((t for t in desc.tags if t.category == "Rarity"), None)
             result.append(
                 InventoryItem(
                     asset_id=asset.assetid,
                     market_hash_name=desc.market_hash_name,
                     icon_url=desc.icon_url,
+                    rarity=rarity_tag.internal_name if rarity_tag else None,
                 )
             )
 

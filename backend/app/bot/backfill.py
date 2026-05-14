@@ -2,6 +2,7 @@ import asyncio
 import logging
 from datetime import date, timezone
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,12 +40,17 @@ async def backfill_skin(market_hash_name: str, db: AsyncSession) -> int:
             market_hash_name,
         )
         return 0
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 400:
+            logger.warning("Skin %r ignoré — Steam 400 (skin inconnu ou hash invalide)", market_hash_name)
+            return 0
+        raise
     except SteamError as exc:
         logger.error("Backfill échoué pour %r : %s", market_hash_name, exc)
         return 0
 
     if not points:
-        logger.debug("Aucun historique Steam pour %r", market_hash_name)
+        logger.warning("Aucun historique Steam pour %r", market_hash_name)
         return 0
 
     raw_count = len(points)
@@ -116,7 +122,10 @@ async def backfill_all_skins(db: AsyncSession) -> None:
     total_inserted = 0
 
     for i, name in enumerate(names):
-        total_inserted += await backfill_skin(name, db)
+        try:
+            total_inserted += await backfill_skin(name, db)
+        except Exception as e:
+            logger.warning(f"Skin '{name}' ignoré : {e}")
         if i < len(names) - 1:
             await asyncio.sleep(_RATE_LIMIT_DELAY)
 

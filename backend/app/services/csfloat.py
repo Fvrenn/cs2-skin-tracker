@@ -23,6 +23,7 @@ class CSFloatRateLimitError(CSFloatError):
 class _CSFloatItem(BaseModel):
     market_hash_name: str | None = None
     float_value: float | None = None
+    tradable: int | None = None
 
 
 class _CSFloatListing(BaseModel):
@@ -117,8 +118,8 @@ class CSFloatClient:
 
     async def get_listings(self, market_hash_name: str) -> int | None:
         """
-        Returns the lowest listed price in cents for the given skin, or None if not listed.
-        Sorted by lowest_price so the first result is the cheapest buy-now listing.
+        Returns the lowest tradable buy-now price in cents, or the global lowest as fallback.
+        Fetches 10 listings sorted by price, then filters client-side on item.tradable == 1.
         """
         response = await self._get(
             "/listings",
@@ -126,15 +127,34 @@ class CSFloatClient:
                 "market_hash_name": market_hash_name,
                 "sort_by": "lowest_price",
                 "type": "buy_now",
-                "limit": 1,
+                "limit": 10,
             },
         )
 
-        if response.status_code == 404:
+        # DEBUG — à retirer après diagnostic
+        logger.debug("[DEBUG] CSFloat GET %s — status %d", response.url, response.status_code)
+
+        if response.status_code in (400, 404):
+            logger.debug("[DEBUG] CSFloat 400/404 raw body: %s", response.text[:500])
+            return None
+
+        if not response.is_success:
+            logger.warning(
+                "CSFloat unexpected status %d for %r", response.status_code, market_hash_name
+            )
             return None
 
         raw = response.json()
-        # Handle both {"data": [...]} wrapper and plain list
+
+        # DEBUG — à retirer après diagnostic
+        if isinstance(raw, dict):
+            _first_raw = raw.get("data", [None])[0] if raw.get("data") else raw
+        elif isinstance(raw, list):
+            _first_raw = raw[0] if raw else None
+        else:
+            _first_raw = raw
+        logger.debug("[DEBUG] CSFloat first raw element for %r: %s", market_hash_name, _first_raw)
+
         if isinstance(raw, dict):
             listings_raw = raw.get("data", [])
         elif isinstance(raw, list):
@@ -150,15 +170,20 @@ class CSFloatClient:
         if not listings_raw:
             return None
 
-        try:
-            first = _CSFloatListing.model_validate(listings_raw[0])
-        except Exception as exc:
-            logger.error(
-                "Failed to parse CSFloat listing for %r: %s", market_hash_name, exc
-            )
+        listings: list[_CSFloatListing] = []
+        for entry in listings_raw:
+            try:
+                listings.append(_CSFloatListing.model_validate(entry))
+            except Exception as exc:
+                logger.warning("Failed to parse CSFloat listing for %r: %s", market_hash_name, exc)
+
+        if not listings:
             return None
 
-        return first.price
+        tradable = [l for l in listings if l.item and l.item.tradable == 1]
+        candidates = tradable if tradable else listings
+        price_usd_cents = min(l.price for l in candidates)
+        return round(price_usd_cents * settings.CSFLOAT_USD_TO_EUR)
 
     async def get_listings_stats(
         self, market_hash_name: str
@@ -177,7 +202,13 @@ class CSFloatClient:
             },
         )
 
-        if response.status_code == 404:
+        if response.status_code in (400, 404):
+            return None
+
+        if not response.is_success:
+            logger.warning(
+                "CSFloat unexpected status %d for stats %r", response.status_code, market_hash_name
+            )
             return None
 
         raw = response.json()
