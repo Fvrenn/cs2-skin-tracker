@@ -167,7 +167,9 @@ export default function SkinsPage() {
 
       {syncMutation.isSuccess && (
         <div className="bg-green-900/20 border border-green-800/40 rounded-md px-4 py-2 text-sm text-green-400">
-          {syncMutation.data.message}
+          {syncMutation.data.new_skins > 0
+            ? `✅ ${syncMutation.data.synced} skins synchronisés, ${syncMutation.data.new_skins} nouveaux ajoutés`
+            : '✅ Inventaire à jour'}
         </div>
       )}
       {syncMutation.isError && (
