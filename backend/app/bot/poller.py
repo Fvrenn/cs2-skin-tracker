@@ -23,24 +23,18 @@ async def _fetch_csfloat(name: str) -> int | None:
         return None
 
 
-async def _lookup_skinport(
-    sp_stats: dict[str, SkinportItemStats], name: str
-) -> SkinportItemStats | None:
-    # Skinport data was bulk-fetched upfront; this coroutine is a dict lookup.
-    # Kept as a coroutine so asyncio.gather stays symmetric with CSFloat.
-    return sp_stats.get(name)
-
-
 async def poll_skin_prices(
-    market_hash_names: list[str], db: AsyncSession
+    market_hash_names: list[str],
+    db: AsyncSession,
+    *,
+    with_csfloat: bool = True,
 ) -> None:
     """
-    Polls live prices for every skin in market_hash_names and inserts them into
-    price_history with ON CONFLICT DO NOTHING.
+    Polls live prices for the given skins and inserts rows into price_history
+    with ON CONFLICT DO NOTHING.
 
-    Skinport's /items endpoint returns the full catalog in one call — it is
-    fetched once upfront to stay within the 8 req/5 min rate limit.
-    CSFloat is called per skin. 1 second delay between skins.
+    Skinport's /items endpoint is bulk-fetched once for all skins.
+    CSFloat is called per skin only when with_csfloat=True (tier 1).
     """
     if not market_hash_names:
         return
@@ -48,19 +42,24 @@ async def poll_skin_prices(
     now = datetime.now(timezone.utc)
 
     # ── Skinport — bulk fetch once for all skins ──────────────────────────────
-    logger.info("Fetching Skinport catalog for %d skin(s)…", len(market_hash_names))
+    logger.info(
+        "Fetching Skinport catalog for %d skin(s) (csfloat=%s)…",
+        len(market_hash_names),
+        with_csfloat,
+    )
     try:
         sp_stats = await skinport_client.get_item_stats(market_hash_names)
     except SkinportError as exc:
         logger.warning("Skinport bulk fetch failed: %s — skipping Skinport data", exc)
         sp_stats = {}
 
-    # ── Per-skin: CSFloat (real async I/O) + Skinport (dict lookup) ──────────
+    # ── Per-skin loop ─────────────────────────────────────────────────────────
     for i, name in enumerate(market_hash_names):
-        cf_price, sp_stat = await asyncio.gather(
-            _fetch_csfloat(name),
-            _lookup_skinport(sp_stats, name),
-        )
+        cf_price: int | None = None
+        if with_csfloat:
+            cf_price = await _fetch_csfloat(name)
+
+        sp_stat: SkinportItemStats | None = sp_stats.get(name)
 
         rows: list[dict[str, object]] = []
 
