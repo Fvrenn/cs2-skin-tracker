@@ -76,21 +76,8 @@ class CSFloatClient:
                 continue
 
             if response.status_code == 429:
-                if attempt >= max_attempts - 1:
-                    raise CSFloatRateLimitError(
-                        f"Rate limit exceeded after {max_attempts} attempts"
-                    )
-                retry_after = float(response.headers.get("Retry-After", delay))
-                wait = max(retry_after, delay)
-                logger.warning(
-                    "CSFloat 429 rate limit (attempt %d/%d), retrying in %.1fs",
-                    attempt + 1,
-                    max_attempts,
-                    wait,
-                )
-                await asyncio.sleep(wait)
-                delay = min(delay * 2, 60.0)
-                continue
+                logger.warning("CSFloat 429 rate limit on %s — skipping immediately", path)
+                raise CSFloatRateLimitError("Rate limit — skin skipped")
 
             if response.status_code == 401:
                 logger.critical("CSFloat API key is invalid or expired")
@@ -121,15 +108,19 @@ class CSFloatClient:
         Returns the lowest tradable buy-now price in cents, or the global lowest as fallback.
         Fetches 10 listings sorted by price, then filters client-side on item.tradable == 1.
         """
-        response = await self._get(
-            "/listings",
-            params={
-                "market_hash_name": market_hash_name,
-                "sort_by": "lowest_price",
-                "type": "buy_now",
-                "limit": 10,
-            },
-        )
+        try:
+            response = await self._get(
+                "/listings",
+                params={
+                    "market_hash_name": market_hash_name,
+                    "sort_by": "lowest_price",
+                    "type": "buy_now",
+                    "limit": 10,
+                },
+            )
+        except CSFloatRateLimitError:
+            logger.warning("CSFloat rate limited for %r — skipping", market_hash_name)
+            return None
 
         # DEBUG — à retirer après diagnostic
         logger.debug("[DEBUG] CSFloat GET %s — status %d", response.url, response.status_code)
@@ -192,15 +183,19 @@ class CSFloatClient:
         Returns min/max/median prices and listing count for a skin (up to 50 listings).
         Returns None if no listings exist (404).
         """
-        response = await self._get(
-            "/listings",
-            params={
-                "market_hash_name": market_hash_name,
-                "sort_by": "lowest_price",
-                "type": "buy_now",
-                "limit": 50,
-            },
-        )
+        try:
+            response = await self._get(
+                "/listings",
+                params={
+                    "market_hash_name": market_hash_name,
+                    "sort_by": "lowest_price",
+                    "type": "buy_now",
+                    "limit": 50,
+                },
+            )
+        except CSFloatRateLimitError:
+            logger.warning("CSFloat rate limited for stats %r — skipping", market_hash_name)
+            return None
 
         if response.status_code in (400, 404):
             return None

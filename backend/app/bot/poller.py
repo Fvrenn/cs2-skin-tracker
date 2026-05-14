@@ -11,7 +11,7 @@ from app.services.skinport import SkinportError, SkinportItemStats, skinport_cli
 
 logger = logging.getLogger(__name__)
 
-_INTER_SKIN_DELAY = 1.0  # seconds between each skin
+_INTER_SKIN_DELAY = 3.0  # seconds between each skin — 150 skins ≈ 7.5 min < 10 min budget
 
 
 async def _fetch_csfloat(name: str) -> int | None:
