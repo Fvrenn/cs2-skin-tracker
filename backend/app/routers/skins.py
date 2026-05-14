@@ -101,14 +101,15 @@ async def get_skin(
     last_prices = await get_last_prices(db, [skin.market_hash_name])
     last_price = last_prices.get(skin.market_hash_name)
 
-    bucket_expr = func.date_trunc("hour", PriceHistory.recorded_at)
+    trunc_unit = "hour" if days <= 30 else "day"
+    bucket_expr = func.date_trunc(trunc_unit, PriceHistory.recorded_at)
 
     where_clauses = [PriceHistory.market_hash_name == skin.market_hash_name]
     if days > 0:
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
         where_clauses.append(PriceHistory.recorded_at > cutoff)
 
-    # Step 1 — avg per (hour-bucket, source)
+    # Step 1 — avg per (bucket, source) — hourly ≤ 30j, daily > 30j
     per_source_subq = (
         select(
             bucket_expr.label("bucket"),
