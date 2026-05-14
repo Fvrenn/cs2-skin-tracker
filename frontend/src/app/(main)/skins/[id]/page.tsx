@@ -18,6 +18,7 @@ import { useSkin, useSetPurchasePrice } from '@/hooks/useSkins';
 import { StatusBadge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { TechnicalAnalysis } from '@/components/skins/TechnicalAnalysis';
 import { computePnl, formatEur, formatPercent, formatPnl, pnlClasses } from '@/lib/utils';
 
 const STEAM_IMG = 'https://community.cloudflare.steamstatic.com/economy/image';
@@ -386,6 +387,16 @@ export default function SkinDetailPage() {
           </div>
         )}
       </div>
+
+      {/* Technical analysis */}
+      <TechnicalAnalysis
+        prices={chartData.map((p) => p.price)}
+        purchasePrice={
+          skin.purchase_price_cents != null
+            ? skin.purchase_price_cents / 100
+            : undefined
+        }
+      />
 
       {/* Alerts */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">

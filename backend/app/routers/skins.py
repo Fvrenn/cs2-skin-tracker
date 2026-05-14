@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -5,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.bot.backfill import backfill_skins
 from app.database import get_db
 from app.deps import get_current_user
 from app.models.price_history import PriceHistory, PriceSource
@@ -212,6 +214,7 @@ async def sync_inventory(
         }
 
     imported = 0
+    new_names: list[str] = []
     for item in items:
         icon = item.icon_url or None
         if item.asset_id in existing_by_asset:
@@ -228,7 +231,31 @@ async def sync_inventory(
                 float_value=item.float_value,
                 rarity=item.rarity,
             ))
+            new_names.append(item.market_hash_name)
             imported += 1
 
     await db.commit()
-    return SyncResult(imported=imported, message=f"{imported} skin(s) importé(s) depuis Steam")
+
+    names_to_backfill: list[str] = []
+    if new_names:
+        # Parmi les nouveaux skins, garder uniquement ceux sans aucun point Steam en BDD
+        distinct_new = list(dict.fromkeys(new_names))  # dédoublonner, ordre stable
+        existing_steam = await db.execute(
+            select(PriceHistory.market_hash_name)
+            .where(
+                PriceHistory.market_hash_name.in_(distinct_new),
+                PriceHistory.source == PriceSource.STEAM,
+            )
+            .distinct()
+        )
+        names_with_history: set[str] = set(existing_steam.scalars().all())
+        names_to_backfill = [n for n in distinct_new if n not in names_with_history]
+        if names_to_backfill:
+            asyncio.create_task(backfill_skins(names_to_backfill))
+
+    return SyncResult(
+        synced=len(items),
+        new_skins=imported,
+        backfill_started=bool(names_to_backfill),
+        backfill_count=len(names_to_backfill),
+    )

@@ -39,5 +39,7 @@ class PurchasePriceRequest(BaseModel):
 
 
 class SyncResult(BaseModel):
-    imported: int
-    message: str
+    synced: int
+    new_skins: int
+    backfill_started: bool
+    backfill_count: int

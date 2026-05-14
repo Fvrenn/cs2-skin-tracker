@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { LogOut, RefreshCw } from 'lucide-react';
@@ -34,6 +34,9 @@ export default function SettingsPage() {
   const [discordId, setDiscordId] = useState('');
   const [thresholdUp, setThresholdUp] = useState('');
   const [thresholdDown, setThresholdDown] = useState('');
+  const [showBackfillBanner, setShowBackfillBanner] = useState(false);
+  const [backfillCount, setBackfillCount] = useState(0);
+  const bannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (settings) {
@@ -43,6 +46,28 @@ export default function SettingsPage() {
       setThresholdDown(String(Math.round(settings.threshold_down * 100)));
     }
   }, [settings]);
+
+  useEffect(() => {
+    if (!syncMutation.data) return;
+    if (syncMutation.data.backfill_started) {
+      setBackfillCount(syncMutation.data.backfill_count);
+      setShowBackfillBanner(true);
+      if (bannerTimerRef.current) clearTimeout(bannerTimerRef.current);
+      bannerTimerRef.current = setTimeout(() => setShowBackfillBanner(false), 30_000);
+    } else {
+      setShowBackfillBanner(false);
+      if (bannerTimerRef.current) {
+        clearTimeout(bannerTimerRef.current);
+        bannerTimerRef.current = null;
+      }
+    }
+  }, [syncMutation.data]);
+
+  useEffect(() => {
+    return () => {
+      if (bannerTimerRef.current) clearTimeout(bannerTimerRef.current);
+    };
+  }, []);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -63,6 +88,13 @@ export default function SettingsPage() {
     removeToken();
     void queryClient.clear();
     router.replace('/login');
+  }
+
+  function getSyncMessage(): string {
+    if (!syncMutation.data) return '';
+    const { new_skins, synced } = syncMutation.data;
+    if (new_skins > 0) return `✅ ${synced} skins synchronisés, ${new_skins} nouveaux ajoutés`;
+    return '✅ Inventaire à jour';
   }
 
   if (isLoading) {
@@ -86,6 +118,17 @@ export default function SettingsPage() {
           Déconnexion
         </Button>
       </div>
+
+      {showBackfillBanner && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-300">
+          <span className="shrink-0 mt-px">⏳</span>
+          <span>
+            Historique en cours de chargement pour{' '}
+            <strong>{backfillCount}</strong> nouveaux skins — les graphiques seront disponibles
+            dans quelques minutes
+          </span>
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} className="space-y-5">
         <Card>
@@ -121,7 +164,7 @@ export default function SettingsPage() {
               Sync inventaire Steam
             </Button>
             {syncMutation.isSuccess && (
-              <span className="text-xs text-green-400">{syncMutation.data.message}</span>
+              <span className="text-xs text-green-400">{getSyncMessage()}</span>
             )}
             {syncMutation.isError && (
               <span className="text-xs text-red-400">
@@ -135,10 +178,11 @@ export default function SettingsPage() {
 
         <Card>
           <h2 className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-1">
-            Seuils d'alerte
+            {"Seuils d'alerte"}
           </h2>
           <p className="text-xs text-zinc-600 mb-4">
-            Hausse : déclenche EN HAUSSE quand le gain dépasse ce %. Retournement : déclenche ALERTE quand le recul depuis le pic dépasse ce %.
+            Hausse : déclenche EN HAUSSE quand le gain dépasse ce %. Retournement : déclenche
+            ALERTE quand le recul depuis le pic dépasse ce %.
           </p>
           <div className="grid grid-cols-2 gap-4">
             <Input

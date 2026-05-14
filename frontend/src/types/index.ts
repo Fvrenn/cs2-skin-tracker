@@ -30,8 +30,10 @@ export interface SkinDetail extends SkinSummary {
 }
 
 export interface SyncResult {
-  imported: number;
-  message: string;
+  synced: number;
+  new_skins: number;
+  backfill_started: boolean;
+  backfill_count: number;
 }
 
 export interface PortfolioSummary {

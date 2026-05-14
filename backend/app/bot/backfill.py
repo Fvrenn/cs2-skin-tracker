@@ -136,6 +136,30 @@ async def backfill_all_skins(db: AsyncSession) -> None:
     )
 
 
+async def backfill_skins(names: list[str]) -> None:
+    """
+    Backfills Steam price history for a given list of market_hash_names.
+    Opens its own DB session — safe to run as a background asyncio task.
+    """
+    if not names:
+        return
+    async with AsyncSessionLocal() as db:
+        logger.info("Backfill background déclenché pour %d skin(s)", len(names))
+        total_inserted = 0
+        for i, name in enumerate(names):
+            try:
+                total_inserted += await backfill_skin(name, db)
+            except Exception as e:
+                logger.warning("Skin '%s' ignoré : %s", name, e)
+            if i < len(names) - 1:
+                await asyncio.sleep(_RATE_LIMIT_DELAY)
+        logger.info(
+            "Backfill background terminé — %d points insérés sur %d skin(s)",
+            total_inserted,
+            len(names),
+        )
+
+
 async def run_backfill() -> None:
     """
     Standalone async entry point. Creates its own DB session.
