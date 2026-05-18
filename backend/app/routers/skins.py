@@ -104,61 +104,69 @@ async def get_skin(
     trunc_unit = "hour" if days <= 30 else "day"
     bucket_expr = func.date_trunc(trunc_unit, PriceHistory.recorded_at)
 
-    where_clauses = [PriceHistory.market_hash_name == skin.market_hash_name]
+    base_clauses: list = [PriceHistory.market_hash_name == skin.market_hash_name]
     if days > 0:
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-        where_clauses.append(PriceHistory.recorded_at > cutoff)
-    if days <= 30:
-        where_clauses.append(PriceHistory.source.in_(["csfloat", "skinport"]))
+        base_clauses.append(PriceHistory.recorded_at > cutoff)
 
-    # Step 1 — avg per (bucket, source) — hourly ≤ 30j, daily > 30j
-    per_source_subq = (
-        select(
-            bucket_expr.label("bucket"),
-            PriceHistory.source,
-            func.avg(PriceHistory.price_median).label("avg_price"),
-        )
-        .where(*where_clauses)
-        .group_by(bucket_expr, PriceHistory.source)
-        .subquery()
-    )
-
-    # Step 2 — rank sources within each bucket: csfloat=1 > skinport=2 > steam=3
-    source_rank = case(
-        (per_source_subq.c.source == PriceSource.CSFLOAT, 1),
-        (per_source_subq.c.source == PriceSource.SKINPORT, 2),
-        else_=3,
-    )
-    ranked_subq = (
-        select(
-            per_source_subq.c.bucket.label("hour"),
-            per_source_subq.c.avg_price,
-            func.row_number()
-            .over(
-                partition_by=per_source_subq.c.bucket,
-                order_by=source_rank,
+    async def _fetch_history(where_clauses: list) -> list[PriceHistoryPoint]:
+        # Step 1 — avg per (bucket, source) — hourly ≤ 30j, daily > 30j
+        per_source_subq = (
+            select(
+                bucket_expr.label("bucket"),
+                PriceHistory.source,
+                func.avg(PriceHistory.price_median).label("avg_price"),
             )
-            .label("rn"),
+            .where(*where_clauses)
+            .group_by(bucket_expr, PriceHistory.source)
+            .subquery()
         )
-        .subquery()
-    )
 
-    # Step 3 — keep best source per bucket
-    history_result = await db.execute(
-        select(ranked_subq.c.hour, ranked_subq.c.avg_price)
-        .where(ranked_subq.c.rn == 1)
-        .order_by(ranked_subq.c.hour)
-    )
-
-    history = [
-        PriceHistoryPoint(
-            hour=row.hour,
-            avg_price_cents=round(float(row.avg_price)),
-            avg_price_eur=round(float(row.avg_price) / 100, 2),
+        # Step 2 — rank sources within each bucket: csfloat=1 > skinport=2 > steam=3
+        source_rank = case(
+            (per_source_subq.c.source == PriceSource.CSFLOAT, 1),
+            (per_source_subq.c.source == PriceSource.SKINPORT, 2),
+            else_=3,
         )
-        for row in history_result
-        if row.avg_price is not None
-    ]
+        ranked_subq = (
+            select(
+                per_source_subq.c.bucket.label("hour"),
+                per_source_subq.c.avg_price,
+                func.row_number()
+                .over(
+                    partition_by=per_source_subq.c.bucket,
+                    order_by=source_rank,
+                )
+                .label("rn"),
+            )
+            .subquery()
+        )
+
+        # Step 3 — keep best source per bucket
+        result = await db.execute(
+            select(ranked_subq.c.hour, ranked_subq.c.avg_price)
+            .where(ranked_subq.c.rn == 1)
+            .order_by(ranked_subq.c.hour)
+        )
+        return [
+            PriceHistoryPoint(
+                hour=row.hour,
+                avg_price_cents=round(float(row.avg_price)),
+                avg_price_eur=round(float(row.avg_price) / 100, 2),
+            )
+            for row in result
+            if row.avg_price is not None
+        ]
+
+    if days <= 30:
+        # Priorité CSFloat + Skinport ; fallback toutes sources si vide
+        history = await _fetch_history(
+            base_clauses + [PriceHistory.source.in_(["csfloat", "skinport"])]
+        )
+        if not history:
+            history = await _fetch_history(base_clauses)
+    else:
+        history = await _fetch_history(base_clauses)
 
     return SkinDetail(**_skin_to_summary(skin, last_price).model_dump(), price_history=history)
 
