@@ -109,7 +109,7 @@ async def get_skin(
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
         where_clauses.append(PriceHistory.recorded_at > cutoff)
     if days <= 30:
-        where_clauses.append(PriceHistory.source != PriceSource.STEAM)
+        where_clauses.append(PriceHistory.source.in_(["csfloat", "skinport"]))
 
     # Step 1 — avg per (bucket, source) — hourly ≤ 30j, daily > 30j
     per_source_subq = (
